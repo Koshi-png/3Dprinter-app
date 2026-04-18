@@ -239,40 +239,6 @@ def finish_job(printer_id: str, active_jobs: list[dict[str, Any]], history: list
     return remaining, updated_history
 
 
-def delete_job(printer_id: str, active_jobs: list[dict[str, Any]], history: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None]:
-    now = datetime.now().replace(second=0, microsecond=0)
-    remaining = []
-    updated_history = history[:]
-    deleted_job = None
-
-    for job in active_jobs:
-        if job["printer_id"] == printer_id:
-            deleted_job = {
-                **job,
-                "logged_at": now.strftime(TIME_FMT),
-                "status": "deleted",
-            }
-            updated_history.append(deleted_job)
-        else:
-            remaining.append(job)
-
-    updated_history.sort(key=lambda x: x.get("logged_at", x["end_time"]), reverse=True)
-    return remaining, updated_history, deleted_job
-
-
-
-def user_is_active(user_name: str, active_jobs: list[dict[str, Any]]) -> bool:
-    return any(job["user_name"] == user_name for job in active_jobs)
-
-
-
-def delete_user(user_name: str, users: list[str], active_jobs: list[dict[str, Any]]) -> tuple[list[str], bool]:
-    if user_is_active(user_name, active_jobs):
-        return users, False
-    updated_users = [name for name in users if name != user_name]
-    return sorted(set(updated_users)), True
-
-
 # ---------------------------
 # UI部品
 # ---------------------------
@@ -358,47 +324,30 @@ def main() -> None:
         st.write("**登録済み使用者**")
         st.write(", ".join(users))
 
+    # 画面切り替え
     page_options = ["ダッシュボード", "使用登録", "履歴ログ", "設定/マスタ管理"]
-
-    # radioウィジェットのkeyを直接書き換えるとエラーになるため、
-    # 表示中のページ状態とradioの選択状態を分けて管理する。
     redirect_page = st.session_state.pop("redirect_page", None)
-    if "page" not in st.session_state:
-        st.session_state["page"] = "ダッシュボード"
-    if st.session_state["page"] not in page_options:
-        st.session_state["page"] = "ダッシュボード"
-    if "page_selector" not in st.session_state:
-        st.session_state["page_selector"] = st.session_state["page"]
-    if st.session_state["page_selector"] not in page_options:
-        st.session_state["page_selector"] = st.session_state["page"]
-
     if redirect_page in page_options:
-        st.session_state["page"] = redirect_page
         st.session_state["page_selector"] = redirect_page
+    elif "page_selector" not in st.session_state:
+        st.session_state["page_selector"] = "ダッシュボード"
 
-    def sync_page_from_selector():
-        st.session_state["page"] = st.session_state["page_selector"]
-
-    st.radio(
-        "表示ページ",
+    current_page = st.radio(
+        "画面切り替え",
         options=page_options,
         horizontal=True,
         key="page_selector",
         label_visibility="collapsed",
-        on_change=sync_page_from_selector,
     )
-    page = st.session_state["page_selector"]
-    st.session_state["page"] = page
 
-    flash_message = st.session_state.pop("flash_message", None)
-    flash_type = st.session_state.pop("flash_type", "success")
-    if flash_message:
-        getattr(st, flash_type)(flash_message)
+    # ダッシュボードへ戻った直後の完了メッセージ表示
+    if current_page == "ダッシュボード" and st.session_state.get("dashboard_notice"):
+        st.success(st.session_state.pop("dashboard_notice"))
 
     # ------------------
     # ダッシュボード
     # ------------------
-    if page == "ダッシュボード":
+    if current_page == "ダッシュボード":
         render_summary(printers, active_jobs)
         active_map = get_active_job_map(active_jobs)
 
@@ -441,96 +390,70 @@ def main() -> None:
         else:
             st.success("現在、使用中の機械はありません。")
 
-        st.markdown("### 登録の終了・削除")
+        st.markdown("### 手動で終了登録")
         busy_printers = sorted([job["printer_id"] for job in active_jobs])
         if busy_printers:
-            control_col1, control_col2 = st.columns(2)
-            with control_col1:
-                finish_printer = st.selectbox("終了する機械を選択", options=busy_printers, key="finish_printer")
-                if st.button("選択した機械を終了扱いにする", type="secondary"):
-                    active_jobs, history = finish_job(finish_printer, active_jobs, history)
-                    save_state(printers, users, active_jobs, history)
-                    st.session_state["flash_message"] = f"{finish_printer} を終了登録しました。"
-                    st.session_state["flash_type"] = "success"
-                    st.session_state.pop("delete_confirm_printer", None)
-                    st.rerun()
-
-            with control_col2:
-                delete_printer = st.selectbox(
-                    "削除する機械を選択",
-                    options=busy_printers,
-                    key="delete_printer",
-                    help="誤登録や途中取り消し時に、現在の使用状況から削除します。",
-                )
-
-                delete_confirm_printer = st.session_state.get("delete_confirm_printer")
-                if delete_confirm_printer == delete_printer:
-                    st.warning(f"{delete_printer} の現在登録を削除します。よろしいですか？")
-                    confirm_col1, confirm_col2 = st.columns(2)
-                    with confirm_col1:
-                        if st.button("はい、削除する", type="primary"):
-                            active_jobs, history, deleted_job = delete_job(delete_printer, active_jobs, history)
-                            save_state(printers, users, active_jobs, history)
-                            st.session_state.pop("delete_confirm_printer", None)
-                            if deleted_job:
-                                st.session_state["flash_message"] = (
-                                    f"{delete_printer} の現在登録を削除しました。履歴には status=deleted として記録しました。"
-                                )
-                                st.session_state["flash_type"] = "success"
-                            else:
-                                st.session_state["flash_message"] = f"{delete_printer} の削除対象が見つかりませんでした。"
-                                st.session_state["flash_type"] = "warning"
-                            st.rerun()
-                    with confirm_col2:
-                        if st.button("キャンセル", type="secondary"):
-                            st.session_state.pop("delete_confirm_printer", None)
-                            st.rerun()
-                else:
-                    if st.button("選択した機械の現在登録を削除する", type="primary"):
-                        st.session_state["delete_confirm_printer"] = delete_printer
-                        st.rerun()
+            finish_printer = st.selectbox("終了する機械を選択", options=busy_printers, key="finish_printer")
+            if st.button("選択した機械を終了扱いにする", type="secondary"):
+                active_jobs, history = finish_job(finish_printer, active_jobs, history)
+                save_state(printers, users, active_jobs, history)
+                st.success(f"{finish_printer} を終了登録しました。")
+                st.rerun()
         else:
-            st.info("終了登録や削除が必要な使用中機械はありません。")
+            st.info("終了登録が必要な使用中機械はありません。")
 
     # ------------------
     # 使用登録
     # ------------------
-    elif page == "使用登録":
+    if current_page == "使用登録":
         st.markdown("### 新しい印刷ジョブを登録")
         active_map = get_active_job_map(active_jobs)
         available_printers = [p for p in printers if p not in active_map]
 
-        with st.form("register_form"):
-            use_new_printer = st.checkbox("新しい機械名を追加して登録する")
-            if use_new_printer:
-                printer_id = st.text_input("新しい機械名", placeholder="例: R6")
-            else:
-                printer_id = st.selectbox(
-                    "使用する機械名",
-                    options=available_printers if available_printers else printers,
-                    help="使用中ではない機械が優先表示されます。",
-                )
+        # フォームを開いた時点の現在時刻を初期値として保持する
+        form_opened_at_str = st.session_state.get("register_form_opened_at")
+        if not form_opened_at_str:
+            form_opened_at = datetime.now().replace(second=0, microsecond=0)
+            st.session_state["register_form_opened_at"] = form_opened_at.strftime(TIME_FMT)
+        else:
+            form_opened_at = parse_dt(form_opened_at_str)
 
-            use_new_user = st.checkbox("新しい使用者名を追加して登録する")
-            if use_new_user:
-                user_name = st.text_input("新しい使用者名", placeholder="例: 野山")
-            else:
-                user_name = st.selectbox("使用者名", options=users)
+        use_new_printer = st.checkbox("新しい機械名を追加して登録する")
+        if use_new_printer:
+            printer_id = st.text_input("新しい機械名", placeholder="例: R6")
+        else:
+            printer_id = st.selectbox(
+                "使用する機械名",
+                options=available_printers if available_printers else printers,
+                help="使用中ではない機械が優先表示されます。",
+            )
 
-            print_name = st.text_input("印刷物名", placeholder="例: ローバ部品ケース")
-            planned_minutes = st.number_input("印刷予定時間（分）", min_value=1, max_value=24 * 60, value=120, step=10)
-            use_custom_start = st.checkbox("開始時刻を手動入力する")
+        use_new_user = st.checkbox("新しい使用者名を追加して登録する")
+        if use_new_user:
+            user_name = st.text_input("新しい使用者名", placeholder="例: 野山")
+        else:
+            user_name = st.selectbox("使用者名", options=users)
 
-            if use_custom_start:
-                today = datetime.now()
-                start_date = st.date_input("開始日", value=today.date())
-                start_clock = st.time_input("開始時刻", value=today.time().replace(second=0, microsecond=0))
-                start_time = datetime.combine(start_date, start_clock)
-            else:
-                start_time = datetime.now().replace(second=0, microsecond=0)
-                st.info(f"開始時刻は現在時刻を使用します: {start_time.strftime(TIME_FMT)}")
+        print_name = st.text_input("印刷物名", placeholder="例: ローバ部品ケース")
+        planned_minutes = st.number_input("印刷予定時間（分）", min_value=1, max_value=24 * 60, value=120, step=10)
+        use_custom_start = st.checkbox(
+            "開始時刻を手動入力する",
+            help="オフのときは、アプリを開いた時点の現在時刻を自動で使います。",
+        )
 
-            submitted = st.form_submit_button("使用登録する", type="primary")
+        if use_custom_start:
+            start_date = st.date_input("開始日", value=form_opened_at.date())
+            start_clock = st.time_input("開始時刻", value=form_opened_at.time())
+            start_time = datetime.combine(start_date, start_clock).replace(second=0, microsecond=0)
+            st.caption(f"手動入力した開始時刻を使用します: {start_time.strftime(TIME_FMT)}")
+        else:
+            start_time = form_opened_at
+            st.info(f"開始時刻は現在時刻を自動入力します: {start_time.strftime(TIME_FMT)}")
+
+        expected_end_time = start_time + timedelta(minutes=int(planned_minutes))
+        st.caption(f"終了予定時刻: {expected_end_time.strftime(TIME_FMT)}")
+
+        submitted = st.button("使用登録する", type="primary")
 
         if submitted:
             printer_id = (printer_id or "").strip()
@@ -553,15 +476,15 @@ def main() -> None:
                     start_time=start_time,
                 )
                 save_state(printers, users, active_jobs, history)
-                st.session_state["flash_message"] = f"{printer_id} の使用を登録しました。ダッシュボードに戻りました。"
-                st.session_state["flash_type"] = "success"
+                st.session_state.pop("register_form_opened_at", None)
+                st.session_state["dashboard_notice"] = f"{printer_id} の使用を登録しました。"
                 st.session_state["redirect_page"] = "ダッシュボード"
                 st.rerun()
 
     # ------------------
     # 履歴ログ
     # ------------------
-    elif page == "履歴ログ":
+    if current_page == "履歴ログ":
         st.markdown("### 使用履歴ログ")
         if history:
             rows = []
@@ -588,7 +511,7 @@ def main() -> None:
     # ------------------
     # 設定/マスタ管理
     # ------------------
-    elif page == "設定/マスタ管理":
+    if current_page == "設定/マスタ管理":
         st.markdown("### マスタ管理")
         col1, col2 = st.columns(2)
 
@@ -612,7 +535,6 @@ def main() -> None:
         with col2:
             st.markdown("#### 使用者一覧")
             st.dataframe(pd.DataFrame({"使用者名": users}), hide_index=True, use_container_width=True)
-
             new_master_user = st.text_input("使用者を追加", placeholder="例: 野山", key="new_master_user")
             if st.button("使用者を追加する"):
                 new_master_user = new_master_user.strip()
@@ -626,53 +548,6 @@ def main() -> None:
                     save_state(printers, users, active_jobs, history)
                     st.success(f"{new_master_user} を追加しました。")
                     st.rerun()
-
-            st.markdown("##### 登録済み使用者の削除")
-            if users:
-                user_to_delete = st.selectbox(
-                    "削除する使用者名を選択",
-                    options=users,
-                    key="delete_user_name",
-                    help="現在使用中のデータに含まれていない使用者名のみ削除できます。",
-                )
-
-                delete_confirm_user = st.session_state.get("delete_confirm_user")
-                target_is_active = user_is_active(user_to_delete, active_jobs)
-
-                if target_is_active:
-                    st.warning(
-                        f"{user_to_delete} は現在使用中のデータに含まれているため、今は削除できません。"
-                        " 先に対象の使用登録を終了または削除してください。"
-                    )
-                    if delete_confirm_user == user_to_delete:
-                        st.session_state.pop("delete_confirm_user", None)
-                elif delete_confirm_user == user_to_delete:
-                    st.warning(f"使用者名『{user_to_delete}』を候補一覧から削除します。よろしいですか？")
-                    confirm_col1, confirm_col2 = st.columns(2)
-                    with confirm_col1:
-                        if st.button("はい、使用者を削除する", type="primary"):
-                            users, deleted = delete_user(user_to_delete, users, active_jobs)
-                            st.session_state.pop("delete_confirm_user", None)
-                            if deleted:
-                                save_state(printers, users, active_jobs, history)
-                                st.session_state["flash_message"] = f"使用者名『{user_to_delete}』を削除しました。"
-                                st.session_state["flash_type"] = "success"
-                            else:
-                                st.session_state["flash_message"] = (
-                                    f"使用者名『{user_to_delete}』は現在使用中のため削除できませんでした。"
-                                )
-                                st.session_state["flash_type"] = "warning"
-                            st.rerun()
-                    with confirm_col2:
-                        if st.button("キャンセル", type="secondary"):
-                            st.session_state.pop("delete_confirm_user", None)
-                            st.rerun()
-                else:
-                    if st.button("選択した使用者を削除する", type="secondary"):
-                        st.session_state["delete_confirm_user"] = user_to_delete
-                        st.rerun()
-            else:
-                st.info("登録済みの使用者はいません。")
 
         st.markdown("### 保存ファイル")
         st.code(
