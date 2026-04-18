@@ -1,0 +1,46 @@
+[
+  {
+    "job_id": "active-001",
+    "printer_id": "R2",
+    "user_name": "田中",
+    "print_name": "ギアケース",
+    "planned_minutes": 180,
+    "start_time": "2026-04-18 03:48",
+    "end_time": "2026-04-18 06:48",
+    "logged_at": "2026-04-18 14:39",
+    "status": "completed"
+  },
+  {
+    "job_id": "active-002",
+    "printer_id": "B3",
+    "user_name": "佐藤",
+    "print_name": "治具A",
+    "planned_minutes": 90,
+    "start_time": "2026-04-18 04:23",
+    "end_time": "2026-04-18 05:53",
+    "logged_at": "2026-04-18 14:39",
+    "status": "completed"
+  },
+  {
+    "job_id": "hist-001",
+    "printer_id": "R1",
+    "user_name": "鈴木",
+    "print_name": "センサーカバー",
+    "planned_minutes": 120,
+    "start_time": "2026-04-16 23:43",
+    "end_time": "2026-04-17 01:43",
+    "logged_at": "2026-04-17 01:43",
+    "status": "completed"
+  },
+  {
+    "job_id": "hist-002",
+    "printer_id": "B1",
+    "user_name": "山田",
+    "print_name": "リンク部品",
+    "planned_minutes": 75,
+    "start_time": "2026-04-16 02:43",
+    "end_time": "2026-04-16 03:58",
+    "logged_at": "2026-04-16 03:58",
+    "status": "completed"
+  }
+]
