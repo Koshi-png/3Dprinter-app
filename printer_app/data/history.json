@@ -1,5 +1,27 @@
 [
   {
+    "job_id": "job-1776514990",
+    "printer_id": "R1",
+    "user_name": "梶原 健生",
+    "print_name": "ローバ",
+    "planned_minutes": 30,
+    "start_time": "2026-04-18 21:22",
+    "end_time": "2026-04-18 21:52",
+    "logged_at": "2026-04-20 19:24",
+    "status": "completed"
+  },
+  {
+    "job_id": "job-1776515307",
+    "printer_id": "B2",
+    "user_name": "梶原 健生",
+    "print_name": "部品",
+    "planned_minutes": 20,
+    "start_time": "2026-04-18 17:15",
+    "end_time": "2026-04-18 17:35",
+    "logged_at": "2026-04-18 21:28",
+    "status": "completed"
+  },
+  {
     "job_id": "active-001",
     "printer_id": "R2",
     "user_name": "田中",
