@@ -6,27 +6,37 @@ import time
 from datetime import date, datetime, time as dt_time, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
 
 APP_TITLE = "3Dプリンター使用状況ダッシュボード"
 TIME_FMT = "%Y-%m-%d %H:%M"
+APP_TZ = ZoneInfo("Asia/Tokyo")
 DEFAULT_PRINTERS = ["R1", "R2", "R3", "R4", "R5", "B1", "B2", "B3", "B4"]
 DEFAULT_USERS = ["田中", "佐藤", "鈴木", "山田"]
 BASE_DIR = Path(__file__).resolve().parent
 LEGACY_DATA_DIR = BASE_DIR / "data"
 DEFAULT_DATA_DIR = Path.home() / ".printer_dashboard_data"
+LAYOUT_CANDIDATES = [
+    BASE_DIR / "assets" / "layout-1.png",
+    BASE_DIR / "layout-1.png",
+    BASE_DIR / "assets" / "layout.png",
+]
 
 
+# ---------------------------
+# パス・永続化
+# ---------------------------
 def get_data_dir() -> Path:
-    env_dir = None
+    secret_dir = None
     try:
-        env_dir = st.secrets.get("DATA_DIR", None)
+        secret_dir = st.secrets.get("DATA_DIR", None)
     except Exception:
-        env_dir = None
-    if env_dir:
-        return Path(env_dir)
+        secret_dir = None
+    if secret_dir:
+        return Path(secret_dir)
     return DEFAULT_DATA_DIR
 
 
@@ -52,84 +62,6 @@ def atomic_write_json(path: Path, data: Any) -> None:
     tmp.replace(path)
 
 
-# ---------------------------
-# 永続データ初期化
-# ---------------------------
-def bootstrap_persistent_data() -> None:
-    paths = get_paths()
-    data_dir = paths["data_dir"]
-    data_dir.mkdir(parents=True, exist_ok=True)
-
-    # 旧保存先からの移行
-    legacy_files = {
-        "printers": LEGACY_DATA_DIR / "printers.json",
-        "users": LEGACY_DATA_DIR / "users.json",
-        "active": LEGACY_DATA_DIR / "active_jobs.json",
-        "history": LEGACY_DATA_DIR / "history.json",
-    }
-    for key, legacy_path in legacy_files.items():
-        new_path = paths[key]
-        if not new_path.exists() and legacy_path.exists():
-            new_path.write_text(legacy_path.read_text(encoding="utf-8"), encoding="utf-8")
-
-    now = datetime.now().replace(second=0, microsecond=0)
-    defaults: dict[str, Any] = {
-        "printers": DEFAULT_PRINTERS,
-        "users": DEFAULT_USERS,
-        "active": [
-            {
-                "job_id": "active-001",
-                "printer_id": "R2",
-                "user_name": "田中",
-                "print_name": "ギアケース",
-                "planned_minutes": 180,
-                "start_time": (now - timedelta(minutes=55)).strftime(TIME_FMT),
-                "end_time": (now + timedelta(minutes=125)).strftime(TIME_FMT),
-            },
-            {
-                "job_id": "active-002",
-                "printer_id": "B3",
-                "user_name": "佐藤",
-                "print_name": "治具A",
-                "planned_minutes": 90,
-                "start_time": (now - timedelta(minutes=20)).strftime(TIME_FMT),
-                "end_time": (now + timedelta(minutes=70)).strftime(TIME_FMT),
-            },
-        ],
-        "history": [
-            {
-                "job_id": "hist-001",
-                "printer_id": "R1",
-                "user_name": "鈴木",
-                "print_name": "センサーカバー",
-                "planned_minutes": 120,
-                "start_time": (now - timedelta(days=1, hours=5)).strftime(TIME_FMT),
-                "end_time": (now - timedelta(days=1, hours=3)).strftime(TIME_FMT),
-                "logged_at": (now - timedelta(days=1, hours=3)).strftime(TIME_FMT),
-                "status": "completed",
-            },
-            {
-                "job_id": "hist-002",
-                "printer_id": "B1",
-                "user_name": "山田",
-                "print_name": "リンク部品",
-                "planned_minutes": 75,
-                "start_time": (now - timedelta(days=2, hours=2)).strftime(TIME_FMT),
-                "end_time": (now - timedelta(days=2, hours=0, minutes=45)).strftime(TIME_FMT),
-                "logged_at": (now - timedelta(days=2, hours=0, minutes=45)).strftime(TIME_FMT),
-                "status": "completed",
-            },
-        ],
-    }
-
-    for key in ["printers", "users", "active", "history"]:
-        if not paths[key].exists():
-            atomic_write_json(paths[key], defaults[key])
-
-
-# ---------------------------
-# データ入出力
-# ---------------------------
 def read_json(path: Path, default: Any) -> Any:
     if not path.exists():
         atomic_write_json(path, default)
@@ -146,15 +78,6 @@ def read_json(path: Path, default: Any) -> Any:
         return default
 
 
-def load_state() -> tuple[list[str], list[str], list[dict[str, Any]], list[dict[str, Any]]]:
-    paths = get_paths()
-    printers = read_json(paths["printers"], DEFAULT_PRINTERS)
-    users = read_json(paths["users"], DEFAULT_USERS)
-    active_jobs = read_json(paths["active"], [])
-    history = read_json(paths["history"], [])
-    return printers, users, active_jobs, history
-
-
 def save_state(
     printers: list[str],
     users: list[str],
@@ -168,19 +91,102 @@ def save_state(
     atomic_write_json(paths["history"], history)
 
 
-# ---------------------------
-# 日時ユーティリティ
-# ---------------------------
-def parse_dt(value: str) -> datetime:
-    return datetime.strptime(value, TIME_FMT)
+def load_state() -> tuple[list[str], list[str], list[dict[str, Any]], list[dict[str, Any]]]:
+    paths = get_paths()
+    printers = read_json(paths["printers"], DEFAULT_PRINTERS)
+    users = read_json(paths["users"], DEFAULT_USERS)
+    active_jobs = read_json(paths["active"], [])
+    history = read_json(paths["history"], [])
+    return printers, users, active_jobs, history
 
 
+def bootstrap_persistent_data() -> None:
+    paths = get_paths()
+    paths["data_dir"].mkdir(parents=True, exist_ok=True)
+
+    legacy_files = {
+        "printers": LEGACY_DATA_DIR / "printers.json",
+        "users": LEGACY_DATA_DIR / "users.json",
+        "active": LEGACY_DATA_DIR / "active_jobs.json",
+        "history": LEGACY_DATA_DIR / "history.json",
+    }
+    for key, legacy_path in legacy_files.items():
+        new_path = paths[key]
+        if not new_path.exists() and legacy_path.exists():
+            new_path.write_text(legacy_path.read_text(encoding="utf-8"), encoding="utf-8")
+
+    now = now_floor_minute()
+    defaults: dict[str, Any] = {
+        "printers": DEFAULT_PRINTERS,
+        "users": DEFAULT_USERS,
+        "active": [
+            {
+                "job_id": "active-001",
+                "printer_id": "R2",
+                "user_name": "田中",
+                "print_name": "ギアケース",
+                "planned_minutes": 180,
+                "start_time": format_dt(now - timedelta(minutes=55)),
+                "end_time": format_dt(now + timedelta(minutes=125)),
+            },
+            {
+                "job_id": "active-002",
+                "printer_id": "B3",
+                "user_name": "佐藤",
+                "print_name": "治具A",
+                "planned_minutes": 90,
+                "start_time": format_dt(now - timedelta(minutes=20)),
+                "end_time": format_dt(now + timedelta(minutes=70)),
+            },
+        ],
+        "history": [
+            {
+                "job_id": "hist-001",
+                "printer_id": "R1",
+                "user_name": "鈴木",
+                "print_name": "センサーカバー",
+                "planned_minutes": 120,
+                "start_time": format_dt(now - timedelta(days=1, hours=5)),
+                "end_time": format_dt(now - timedelta(days=1, hours=3)),
+                "logged_at": format_dt(now - timedelta(days=1, hours=3)),
+                "status": "completed",
+            },
+            {
+                "job_id": "hist-002",
+                "printer_id": "B1",
+                "user_name": "山田",
+                "print_name": "リンク部品",
+                "planned_minutes": 75,
+                "start_time": format_dt(now - timedelta(days=2, hours=2)),
+                "end_time": format_dt(now - timedelta(days=2, minutes=45)),
+                "logged_at": format_dt(now - timedelta(days=2, minutes=45)),
+                "status": "completed",
+            },
+        ],
+    }
+
+    for key in ["printers", "users", "active", "history"]:
+        if not paths[key].exists():
+            atomic_write_json(paths[key], defaults[key])
+
+
+# ---------------------------
+# 日時ユーティリティ（常に JST）
+# ---------------------------
 def now_floor_minute() -> datetime:
-    return datetime.now().replace(second=0, microsecond=0)
+    return datetime.now(APP_TZ).replace(second=0, microsecond=0)
+
+
+def parse_dt(value: str) -> datetime:
+    return datetime.strptime(value, TIME_FMT).replace(tzinfo=APP_TZ)
+
+
+def format_dt(value: datetime) -> str:
+    return value.astimezone(APP_TZ).strftime(TIME_FMT)
 
 
 def combine_date_time(d: date, t: dt_time) -> datetime:
-    return datetime.combine(d, t).replace(second=0, microsecond=0)
+    return datetime.combine(d, t).replace(second=0, microsecond=0, tzinfo=APP_TZ)
 
 
 def format_remaining(delta: timedelta) -> str:
@@ -211,7 +217,7 @@ def archive_finished_jobs(
     active_jobs: list[dict[str, Any]], history: list[dict[str, Any]]
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], bool]:
     now = now_floor_minute()
-    remaining_active = []
+    remaining_active: list[dict[str, Any]] = []
     updated_history = history[:]
     history_ids = {job["job_id"] for job in history}
     changed = False
@@ -220,12 +226,13 @@ def archive_finished_jobs(
         end_time = parse_dt(job["end_time"])
         if end_time <= now:
             if job["job_id"] not in history_ids:
-                archived = {
-                    **job,
-                    "logged_at": now.strftime(TIME_FMT),
-                    "status": "completed",
-                }
-                updated_history.append(archived)
+                updated_history.append(
+                    {
+                        **job,
+                        "logged_at": format_dt(now),
+                        "status": "completed",
+                    }
+                )
                 changed = True
         else:
             remaining_active.append(job)
@@ -247,7 +254,6 @@ def register_job(
     start_time: datetime,
 ) -> tuple[list[str], list[str], list[dict[str, Any]], dict[str, Any]]:
     end_time = start_time + timedelta(minutes=planned_minutes)
-
     printer_set = set(printers)
     user_set = set(users)
     printer_set.add(printer_id)
@@ -259,8 +265,8 @@ def register_job(
         "user_name": user_name,
         "print_name": print_name,
         "planned_minutes": planned_minutes,
-        "start_time": start_time.strftime(TIME_FMT),
-        "end_time": end_time.strftime(TIME_FMT),
+        "start_time": format_dt(start_time),
+        "end_time": format_dt(end_time),
     }
 
     updated_active = [j for j in active_jobs if j["printer_id"] != printer_id]
@@ -274,19 +280,18 @@ def finish_job(
     now = now_floor_minute()
     remaining = []
     updated_history = history[:]
-
     for job in active_jobs:
         if job["printer_id"] == printer_id:
-            finished = {
-                **job,
-                "end_time": now.strftime(TIME_FMT),
-                "logged_at": now.strftime(TIME_FMT),
-                "status": "manually_finished",
-            }
-            updated_history.append(finished)
+            updated_history.append(
+                {
+                    **job,
+                    "end_time": format_dt(now),
+                    "logged_at": format_dt(now),
+                    "status": "manually_finished",
+                }
+            )
         else:
             remaining.append(job)
-
     updated_history.sort(key=lambda x: x.get("logged_at", x["end_time"]), reverse=True)
     return remaining, updated_history
 
@@ -298,18 +303,16 @@ def delete_job(
     remaining = []
     updated_history = history[:]
     deleted_job = None
-
     for job in active_jobs:
         if job["printer_id"] == printer_id:
             deleted_job = {
                 **job,
-                "logged_at": now.strftime(TIME_FMT),
+                "logged_at": format_dt(now),
                 "status": "deleted",
             }
             updated_history.append(deleted_job)
         else:
             remaining.append(job)
-
     updated_history.sort(key=lambda x: x.get("logged_at", x["end_time"]), reverse=True)
     return remaining, updated_history, deleted_job
 
@@ -348,8 +351,8 @@ def render_printer_card(printer_id: str, active_job: dict[str, Any] | None) -> N
         st.error("使用中")
         st.write(f"**使用者**: {active_job['user_name']}")
         st.write(f"**印刷物**: {active_job['print_name']}")
-        st.write(f"**開始時刻**: {active_job['start_time']}")
-        st.write(f"**終了予定**: {active_job['end_time']}")
+        st.write(f"**開始時刻**: {active_job['start_time']} JST")
+        st.write(f"**終了予定**: {active_job['end_time']} JST")
         st.write(f"**残り時間**: {format_remaining(remaining)}")
         st.progress(ratio, text=f"進捗 {int(ratio * 100)}%")
 
@@ -357,29 +360,22 @@ def render_printer_card(printer_id: str, active_job: dict[str, Any] | None) -> N
 def render_layout_help() -> None:
     st.markdown("### 配置対応図")
     st.caption("レイアウト図の機械ID: R1〜R5, B1〜B4")
-
-    candidate_paths = [
-        BASE_DIR / "assets" / "layout-1.png",
-        BASE_DIR / "layout-1.png",
-        BASE_DIR / "assets" / "layout.png",
-    ]
-    layout_path = next((path for path in candidate_paths if path.exists()), None)
-
+    layout_path = next((path for path in LAYOUT_CANDIDATES if path.exists()), None)
     if layout_path is not None:
-        st.image(str(layout_path), caption="3Dプリンター配置対応図", use_container_width=True)
-    else:
-        st.warning("配置図画像が見つからなかったため、簡易レイアウトを表示しています。")
-        grid_rows = [
-            ["R5", "", ""],
-            ["R2", "R1", ""],
-            ["R3", "R4", ""],
-            ["B1", "", ""],
-            ["B2", "", ""],
-            ["B3", "", ""],
-            ["B4", "", ""],
-        ]
-        df = pd.DataFrame(grid_rows)
-        st.dataframe(df, hide_index=True, use_container_width=True)
+        st.image(str(layout_path), caption="3Dプリンター配置図", use_container_width=True)
+        return
+
+    st.warning("配置図画像が見つからなかったため、簡易レイアウトを表示しています。")
+    grid_rows = [
+        ["R5", "", ""],
+        ["R2", "R1", ""],
+        ["R3", "R4", ""],
+        ["B1", "", ""],
+        ["B2", "", ""],
+        ["B3", "", ""],
+        ["B4", "", ""],
+    ]
+    st.dataframe(pd.DataFrame(grid_rows), hide_index=True, use_container_width=True)
 
 
 # ---------------------------
@@ -397,11 +393,6 @@ def init_view_state() -> None:
 
 
 def apply_redirect_if_needed() -> str:
-    """
-    Streamlit では、同じ key を持つウィジェット生成後に
-    st.session_state を直接書き換えると例外になる。
-    そのため、リダイレクトは必ずウィジェット生成前に適用する。
-    """
     redirect_page = st.session_state.get("redirect_page")
     if redirect_page:
         st.session_state["page_selector"] = redirect_page
@@ -425,18 +416,18 @@ def main() -> None:
     if archived_changed:
         save_state(printers, users, active_jobs, history)
 
-    # サイドバーのウィジェット生成前にだけリダイレクトを適用する
     current_page = apply_redirect_if_needed()
 
     with st.sidebar:
         st.markdown("### 画面切替")
-        current_page = st.radio(
+        st.radio(
             "表示するページ",
             options=["ダッシュボード", "使用登録", "履歴ログ", "設定/マスタ管理"],
             key="page_selector",
             label_visibility="collapsed",
         )
         st.toggle("自動更新を有効化", key="auto_refresh")
+        st.caption(f"現在時刻基準: {format_dt(now_floor_minute())} JST")
         st.caption(f"保存先: {get_paths()['data_dir']}")
 
     if current_page == "ダッシュボード":
@@ -509,37 +500,35 @@ def main() -> None:
             user_name = st.selectbox("使用者名", options=users, key="register_user")
 
         print_name = st.text_input("印刷物名", placeholder="例: ローバ部品ケース", key="register_print_name")
-        planned_minutes = st.number_input("印刷予定時間（分）", min_value=1, max_value=24 * 60, value=120, step=10, key="register_planned_minutes")
+        planned_minutes = st.number_input(
+            "印刷予定時間（分）", min_value=1, max_value=24 * 60, value=120, step=10, key="register_planned_minutes"
+        )
 
         preview_now = now_floor_minute()
         use_custom_start = st.checkbox(
             "開始時刻を手動入力する",
-            help="オフのときは、登録ボタンを押した時点の現在時刻を自動で使います。",
+            help="オフのときは、登録ボタンを押した時点の現在時刻（JST）を自動で使います。",
             key="use_custom_start",
         )
-
         if use_custom_start:
             manual_date = st.date_input("開始日", value=preview_now.date(), key="manual_start_date")
             manual_time = st.time_input("開始時刻", value=preview_now.time(), key="manual_start_time")
             start_time_preview = combine_date_time(manual_date, manual_time)
-            st.info(f"開始時刻: 手動入力モード ({start_time_preview.strftime(TIME_FMT)})")
-            start_mode_text = "手動入力した開始日時を使います。"
+            st.info(f"開始時刻: 手動入力モード ({format_dt(start_time_preview)} JST)")
         else:
             start_time_preview = preview_now
-            st.info(f"開始時刻: 自動取得モード ({start_time_preview.strftime(TIME_FMT)} は表示時点の目安です)")
-            start_mode_text = "登録ボタンを押した時点の現在時刻を使います。"
+            st.info(f"開始時刻: 自動取得モード（登録時の現在時刻を使用）\n目安: {format_dt(start_time_preview)} JST")
 
-        expected_end_time = start_time_preview + timedelta(minutes=int(planned_minutes))
-        st.caption(start_mode_text)
-        st.caption(f"終了予定時刻（表示上の見込み）: {expected_end_time.strftime(TIME_FMT)}")
+        end_preview = start_time_preview + timedelta(minutes=int(planned_minutes))
+        st.caption(f"終了予定時刻の目安: {format_dt(end_preview)} JST")
 
-        if st.button("使用登録する", type="primary", key="submit_register"):
+        if st.button("使用登録する", type="primary"):
             printer_id = (printer_id or "").strip()
             user_name = (user_name or "").strip()
             print_name = (print_name or "").strip()
-
             start_time_to_use = combine_date_time(manual_date, manual_time) if use_custom_start else now_floor_minute()
             active_map = get_active_job_map(active_jobs)
+
             if not printer_id or not user_name or not print_name:
                 st.error("機械名、使用者名、印刷物名は必須です。")
             elif printer_id in active_map:
@@ -556,7 +545,9 @@ def main() -> None:
                     start_time=start_time_to_use,
                 )
                 save_state(printers, users, active_jobs, history)
-                st.session_state["dashboard_notice"] = f"{printer_id} の使用を登録しました。開始時刻: {start_time_to_use.strftime(TIME_FMT)}"
+                st.session_state["dashboard_notice"] = (
+                    f"{printer_id} の使用を登録しました。開始時刻: {format_dt(start_time_to_use)} JST"
+                )
                 st.session_state["redirect_page"] = "ダッシュボード"
                 st.rerun()
 
@@ -567,13 +558,13 @@ def main() -> None:
             for job in sorted(history, key=lambda x: x.get("logged_at", x["end_time"]), reverse=True):
                 rows.append(
                     {
-                        "記録日時": job.get("logged_at", job["end_time"]),
+                        "記録日時": f"{job.get('logged_at', job['end_time'])} JST",
                         "使用者": job["user_name"],
                         "印刷物": job["print_name"],
                         "使用機械": job["printer_id"],
                         "印刷時間(分)": job["planned_minutes"],
-                        "開始時刻": job["start_time"],
-                        "終了時刻": job["end_time"],
+                        "開始時刻": f"{job['start_time']} JST",
+                        "終了時刻": f"{job['end_time']} JST",
                         "状態": job.get("status", "completed"),
                     }
                 )
@@ -587,7 +578,6 @@ def main() -> None:
     elif current_page == "設定/マスタ管理":
         st.markdown("### マスタ管理")
         col1, col2 = st.columns(2)
-
         with col1:
             st.markdown("#### 機械一覧")
             st.dataframe(pd.DataFrame({"機械ID": printers}), hide_index=True, use_container_width=True)
@@ -650,8 +640,9 @@ def main() -> None:
             )
         )
         st.info(
-            "開始時刻の自動取得は『使用登録する』ボタンを押した時点の現在時刻を使います。"
-            "手動入力をオンにした場合のみ、画面上で指定した日時を開始時刻として使います。"
+            "時刻はすべて Asia/Tokyo（JST）で扱います。"
+            "自動取得時は『使用登録する』ボタンを押した時点の JST 現在時刻を使います。"
+            "手動入力をオンにした場合のみ、画面上で指定した JST 日時を開始時刻として使います。"
         )
 
     if st.session_state.get("auto_refresh"):
