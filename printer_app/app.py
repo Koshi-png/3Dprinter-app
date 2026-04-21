@@ -501,7 +501,7 @@ def main() -> None:
 
         print_name = st.text_input("印刷物名", placeholder="例: ローバ部品ケース", key="register_print_name")
         planned_minutes = st.number_input(
-            "印刷予定時間（分）", min_value=1, max_value=24 * 60, value=120, step=10, key="register_planned_minutes"
+            "印刷予定時間（分）", min_value=1, max_value=240 * 60, value=120, step=10, key="register_planned_minutes"
         )
 
         preview_now = now_floor_minute()
